@@ -15,7 +15,7 @@ Data access is strictly handled using the **Repository Pattern** to ensure contr
 ### Setup Steps
 ```bash
 # 1. Clone repository
-git clone <repo-url>
+git clone https://github.com/shenal-rd203/BOOKING-API-TH.git
 cd BOOKING-API-TH
 
 # 2. Install dependencies
@@ -54,12 +54,9 @@ php artisan test
 
 To keep controllers completely decoupled from Eloquent:
 
-1. **`App\Repositories\BookingRepositoryInterface`**: Declares required data access methods (`all(?string $date)`, `find(string|int $id)`, `isSlotBooked(string $date, string $slot)`, `create(array $data)`, `delete(string|int $id)`).
-2. **`App\Repositories\Eloquent\BookingRepository`**: Concrete implementation containing all Eloquent queries (`Booking::query()`, `where()`, `create()`, `delete()`).
-3. **`App\Providers\AppServiceProvider`**: Binds the interface to the implementation via Laravel’s service container:
-   ```php
-   $this->app->bind(BookingRepositoryInterface::class, BookingRepository::class);
-   ```
+1. **`App\Repositories\BookingRepositoryInterface`**: Declares required data access methods.
+2. **`App\Repositories\Eloquent\BookingRepository`**: Concrete implementation containing all Eloquent queries.
+3. **`App\Providers\AppServiceProvider`**: Binds the interface to the implementation via Laravel’s service.
 4. **`BookingController`**: Injects `BookingRepositoryInterface` in the constructor. The controller never imports or calls the `Booking` model directly.
 
 ---
@@ -78,16 +75,6 @@ If this needed to safely handle high-concurrency traffic:
 2. **Pessimistic Locking**: Use database transactions with `SELECT ... FOR UPDATE` to lock the slot row during the transaction.
 3. **Queued Processing**: Route booking requests into a queue (e.g. RabbitMQ or Redis queue) with a single-worker consumer to process slot reservations sequentially.
 4. **Temporary Hold / Soft Reservation**: Hold the slot in memory with a short TTL (e.g. 5 minutes) while waiting for user confirmation.
-
----
-
-## Learning Laravel & The Repository Pattern (Reflection)
-
-- **What was easy**: Setting up validation with Form Requests (`StoreBookingRequest`) and writing feature tests with `RefreshDatabase` was very intuitive. Laravel's built-in testing helpers (`postJson`, `assertStatus`, `assertJson`) made verifying API responses straightforward.
-- **What was tricky / confusing**:
-  - The repository pattern requires defining interfaces, concrete classes, and container bindings before writing queries. Remembering to keep the controller completely isolated from Eloquent took conscious discipline.
-  - Ensuring non-numeric IDs in `DELETE /bookings/:id` didn't trigger PHP type errors (solved by typehinting `string|int $id` in the repository).
-  - Making sure Laravel always returned JSON errors rather than redirecting when the request didn't send an explicit `Accept: application/json` header (solved using `shouldRenderJsonWhen` in `bootstrap/app.php`).
 
 ---
 
