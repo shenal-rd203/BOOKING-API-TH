@@ -1,58 +1,99 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Booking API — Take-Home Exercise
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+A lightweight Booking API built with PHP and Laravel for scheduling fixed daily appointment slots.
 
-## About Laravel
+Data access is strictly handled using the **Repository Pattern** to ensure controllers never interact directly with Eloquent models.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## How to Run Locally
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+### Prerequisites
+- PHP >= 8.2 (with `pdo_sqlite` extension enabled)
+- Composer
 
-## Learning Laravel
-
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework.
-
-In addition, [Laracasts](https://laracasts.com) contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
-
-You can also watch bite-sized lessons with real-world projects on [Laravel Learn](https://laravel.com/learn), where you will be guided through building a Laravel application from scratch while learning PHP fundamentals.
-
-## Agentic Development
-
-Laravel's predictable structure and conventions make it ideal for AI coding agents like Claude Code, Cursor, and GitHub Copilot. Install [Laravel Boost](https://laravel.com/docs/ai) to supercharge your AI workflow:
-
+### Setup Steps
 ```bash
-composer require laravel/boost --dev
+# 1. Clone repository
+git clone <repo-url>
+cd BOOKING-API-TH
 
-php artisan boost:install
+# 2. Install dependencies
+composer install
+
+# 3. Environment configuration
+cp .env.example .env
+php artisan key:generate
+
+# 4. Run migrations
+php artisan migrate
+
+# 5. Start the local development server
+php artisan serve
+```
+The server will run at `http://127.0.0.1:8000`.
+
+### Running Tests
+Automated feature tests cover all endpoints, validation rules, double-booking prevention, simulated concurrency race conditions, and error responses:
+```bash
+php artisan test
 ```
 
-Boost provides your agent 15+ tools and skills that help agents build Laravel applications while following best practices.
+---
 
-## Contributing
+## Assumptions Made
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+1. **Slots**: Hourly slots between `09:00` and `17:00` (`Booking::SLOTS`).
+2. **Date Format**: Standard ISO `YYYY-MM-DD`. Validation forbids dates in the past (`after_or_equal:today`).
+3. **Storage**: SQLite was chosen for zero-setup, portable local evaluation.
+4. **URL Prefix**: Direct `/bookings` endpoints (configured with `apiPrefix: ''` in `bootstrap/app.php`) to work out-of-the-box with the provided Postman collection.
 
-## Code of Conduct
+---
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+## Repository Layer Structure
 
-## Security Vulnerabilities
+To keep controllers completely decoupled from Eloquent:
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+1. **`App\Repositories\BookingRepositoryInterface`**: Declares required data access methods (`all(?string $date)`, `find(string|int $id)`, `isSlotBooked(string $date, string $slot)`, `create(array $data)`, `delete(string|int $id)`).
+2. **`App\Repositories\Eloquent\BookingRepository`**: Concrete implementation containing all Eloquent queries (`Booking::query()`, `where()`, `create()`, `delete()`).
+3. **`App\Providers\AppServiceProvider`**: Binds the interface to the implementation via Laravel’s service container:
+   ```php
+   $this->app->bind(BookingRepositoryInterface::class, BookingRepository::class);
+   ```
+4. **`BookingController`**: Injects `BookingRepositoryInterface` in the constructor. The controller never imports or calls the `Booking` model directly.
 
-## License
+---
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## The Double-Booking Rule & Concurrency
+
+### My Approach
+I implemented a two-tier defense against double-booking:
+1. **Application-level check**: Before inserting, the controller checks `$this->bookingRepository->isSlotBooked($date, $slot)`. If already taken, it returns a `409 Conflict`.
+2. **Database unique constraint**: A composite unique index on `['date', 'slot']` in the migration (`$table->unique(['date', 'slot']);`).
+3. **Race condition safety**: If two simultaneous requests pass the application check at the exact same millisecond, the database unique constraint blocks the second insert. The controller catches the resulting `QueryException` and converts it into a `409 Conflict` response instead of an unexpected 500 error.
+
+### How I'd Handle High Volume in Production
+If this needed to safely handle high-concurrency traffic:
+1. **Redis Atomic Locks**: Use distributed locks (`Cache::lock("booking:{$date}:{$slot}", 10)`) to serialize access to the specific slot before checking and inserting.
+2. **Pessimistic Locking**: Use database transactions with `SELECT ... FOR UPDATE` to lock the slot row during the transaction.
+3. **Queued Processing**: Route booking requests into a queue (e.g. RabbitMQ or Redis queue) with a single-worker consumer to process slot reservations sequentially.
+4. **Temporary Hold / Soft Reservation**: Hold the slot in memory with a short TTL (e.g. 5 minutes) while waiting for user confirmation.
+
+---
+
+## Learning Laravel & The Repository Pattern (Reflection)
+
+- **What was easy**: Setting up validation with Form Requests (`StoreBookingRequest`) and writing feature tests with `RefreshDatabase` was very intuitive. Laravel's built-in testing helpers (`postJson`, `assertStatus`, `assertJson`) made verifying API responses straightforward.
+- **What was tricky / confusing**:
+  - The repository pattern requires defining interfaces, concrete classes, and container bindings before writing queries. Remembering to keep the controller completely isolated from Eloquent took conscious discipline.
+  - Ensuring non-numeric IDs in `DELETE /bookings/:id` didn't trigger PHP type errors (solved by typehinting `string|int $id` in the repository).
+  - Making sure Laravel always returned JSON errors rather than redirecting when the request didn't send an explicit `Accept: application/json` header (solved using `shouldRenderJsonWhen` in `bootstrap/app.php`).
+
+---
+
+## What I'd Add or Improve with More Time
+
+- **API Resources**: Use Laravel API Resources (`JsonResource`) to standardize JSON payloads and decouple database column names from the client response.
+- **Timezone Support**: Store all dates/slots in UTC and support timezones for multi-location businesses.
+- **Multi-Resource / Multi-Staff Support**: Add a `resource_id` (room, stylist, or doctor) so multiple appointments can happen simultaneously in the same time slot across different resources.
+- **Rate Limiting**: Add Laravel route throttling to prevent spam or brute-force attempts on booking slots.
