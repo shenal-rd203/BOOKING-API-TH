@@ -1,4 +1,4 @@
-# Booking API — Take-Home Exercise
+# Booking API
 
 A lightweight Booking API built with PHP and Laravel for scheduling fixed daily appointment slots.
 
